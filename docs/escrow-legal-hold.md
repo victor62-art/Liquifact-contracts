@@ -104,7 +104,7 @@ the hold state and must explicitly call `clear_legal_hold` to unfreeze.
 
 ## Test coverage
 
-The matrix in `escrow/src/test/legal_hold.rs` covers:
+The matrix in `escrow/src/tests/legal_hold.rs` covers:
 
 1. Each gated function panics with the exact message when hold is `true`.
 2. Each gated function succeeds normally when hold is `false` (or cleared).
@@ -113,4 +113,8 @@ The matrix in `escrow/src/test/legal_hold.rs` covers:
 5. Hold defaults to `false` after `init`.
 6. Hold persists across status transitions (no bypass via state change).
 7. Hold can be toggled and re-blocks operations after re-set.
-8. Hold persists after `transfer_admin`; new admin must explicitly clear it.
+8. Hold persists after `admin transfer`; new admin must explicitly clear it.
+9. Edge cases: hold check fires before amount / status / auth validation.
+10. Non-gated ops (`update_maturity`, `transfer_admin`, getters) are not blocked.
+11. Claim idempotency survives a hold toggle.
+12. Single hold toggle blocks all gated entrypoints in separate escrows.

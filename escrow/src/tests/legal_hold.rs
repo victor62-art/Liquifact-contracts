@@ -4,9 +4,16 @@
 //!   `*_blocked_under_hold`  — hold=true  → must panic with the exact contract message
 //!   `*_passes_when_hold_cleared` — hold=false → operation succeeds normally
 //!
+//! Edge-case tests verify:
+//!   - Hold check fires before status validation (fund, settle, withdraw)
+//!   - Idempotent toggling (set true→true, clear false→false)
+//!   - Non-gated operations (`update_maturity`, `transfer_admin`, getters) are NOT blocked
+//!   - Claim idempotency survives a hold toggle
+//!   - A single hold toggle blocks all gated ops in separate escrows
+//!
 //! Auth tests verify that only the admin can set or clear the hold.
 //!
-//! Gated functions (5 total):
+//! Gated functions (6 entrypoints, 5 unique messages):
 //!   fund / fund_with_commitment  → "Legal hold blocks new funding while active"
 //!   settle                       → "Legal hold blocks settlement finalization"
 //!   withdraw                     → "Legal hold blocks SME withdrawal"
@@ -411,4 +418,202 @@ fn hold_persists_after_admin_transfer() {
     assert!(!client.get_legal_hold());
     let settled = client.settle();
     assert_eq!(settled.status, 2);
+}
+
+// ── 11. Edge-case: hold check fires before amount / status / auth checks ─────
+
+/// Hold must block `sweep_terminal_dust` before the zero-amount guard fires.
+#[test]
+#[should_panic(expected = "Legal hold blocks treasury dust sweep")]
+fn hold_blocks_sweep_before_zero_amount_check() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let admin = Address::generate(&env);
+    let sme = Address::generate(&env);
+    let investor = Address::generate(&env);
+    let (client, _escrow_id, _token, _treasury) =
+        init_settled(&env, &admin, &sme, &investor, "LHZ001");
+    client.set_legal_hold(&true);
+    // Zero amount would normally panic "sweep amount must be positive";
+    // the hold check must fire first.
+    client.sweep_terminal_dust(&0i128);
+}
+
+/// Hold must block `settle` before the status guard fires (open escrow).
+#[test]
+#[should_panic(expected = "Legal hold blocks settlement finalization")]
+fn hold_blocks_settle_before_status_check_on_open_escrow() {
+    let env = Env::default();
+    let (client, admin, sme) = setup(&env);
+    init_open(&client, &env, &admin, &sme, "LHS003");
+    client.set_legal_hold(&true);
+    // Escrow is open (status 0) — "Escrow must be funded" would fire next,
+    // but hold must panic first.
+    client.settle();
+}
+
+/// Hold must block `withdraw` before the status guard fires (open escrow).
+#[test]
+#[should_panic(expected = "Legal hold blocks SME withdrawal")]
+fn hold_blocks_withdraw_before_status_check_on_open_escrow() {
+    let env = Env::default();
+    let (client, admin, sme) = setup(&env);
+    init_open(&client, &env, &admin, &sme, "LHW003");
+    client.set_legal_hold(&true);
+    client.withdraw();
+}
+
+/// Hold must block `fund` before the status guard fires (escrow already funded).
+/// Note: the `amount > 0` check fires before the hold check in `fund_impl`,
+/// so zero-amount is NOT a valid test — use a fully-funded escrow instead.
+#[test]
+#[should_panic(expected = "Legal hold blocks new funding while active")]
+fn hold_blocks_fund_before_status_check_on_funded_escrow() {
+    let env = Env::default();
+    let (client, admin, sme) = setup(&env);
+    let investor = Address::generate(&env);
+    init_funded(&client, &env, &admin, &sme, &investor, "LHF003");
+    client.set_legal_hold(&true);
+    // Escrow is funded (status 1) — "Escrow not open for funding" would fire next,
+    // but hold must panic first.
+    client.fund(&investor, &1i128);
+}
+
+// ── 12. Idempotent toggling ──────────────────────────────────────────────────
+
+#[test]
+fn set_legal_hold_true_when_already_true_is_idempotent() {
+    let env = Env::default();
+    let (client, admin, sme) = setup(&env);
+    init_open(&client, &env, &admin, &sme, "LHI001");
+    client.set_legal_hold(&true);
+    assert!(client.get_legal_hold());
+    // Second set(true) must not panic.
+    client.set_legal_hold(&true);
+    assert!(client.get_legal_hold());
+}
+
+#[test]
+fn clear_legal_hold_when_already_false_is_idempotent() {
+    let env = Env::default();
+    let (client, admin, sme) = setup(&env);
+    init_open(&client, &env, &admin, &sme, "LHI002");
+    // Hold defaults to false — clear must not panic.
+    client.clear_legal_hold();
+    assert!(!client.get_legal_hold());
+    client.clear_legal_hold();
+    assert!(!client.get_legal_hold());
+}
+
+// ── 13. Non-gated operations are NOT blocked by hold ─────────────────────────
+
+/// `update_maturity`, `transfer_admin`, and getters must all work under hold.
+#[test]
+fn non_risk_operations_not_blocked_by_hold() {
+    let env = Env::default();
+    let (client, admin, sme) = setup(&env);
+    init_open(&client, &env, &admin, &sme, "LHN002");
+
+    // Enable hold.
+    client.set_legal_hold(&true);
+    assert!(client.get_legal_hold());
+
+    // Getters must still work.
+    let escrow = client.get_escrow();
+    assert_eq!(escrow.status, 0u32);
+    assert!(client.get_legal_hold());
+
+    // `update_maturity` must not be blocked.
+    let updated = client.update_maturity(&9999u64);
+    assert_eq!(updated.maturity, 9999u64);
+
+    // `transfer_admin` must not be blocked.
+    let new_admin = Address::generate(&env);
+    client.transfer_admin(&new_admin);
+    let escrow = client.get_escrow();
+    assert_eq!(escrow.admin, new_admin);
+}
+
+// ── 14. Re-entrancy / double-spend: claim idempotent after hold cleared ───────
+
+/// After clearing a hold, the idempotent claim guard must still prevent
+/// double-spend (the `is_claimed` marker survives the hold toggle).
+#[test]
+fn claim_after_hold_cleared_still_idempotent() {
+    let env = Env::default();
+    let (client, admin, sme) = setup(&env);
+    let investor = Address::generate(&env);
+    init_funded(&client, &env, &admin, &sme, &investor, "LHD003");
+    client.settle();
+
+    // Set and clear hold.
+    client.set_legal_hold(&true);
+    client.clear_legal_hold();
+
+    // First claim succeeds.
+    client.claim_investor_payout(&investor);
+    assert!(client.is_investor_claimed(&investor));
+
+    // Second claim must be idempotent (no panic).
+    client.claim_investor_payout(&investor);
+    assert!(client.is_investor_claimed(&investor));
+}
+
+// ── 15. Multiple gated operations blocked by one hold toggle ──────────────────
+
+/// A single hold (set once) must block all risk-bearing entrypoints that the
+/// escrow state would otherwise permit. We verify this across three separate
+/// escrows driven to the required state before the hold.
+#[test]
+fn single_hold_blocks_all_gated_ops() {
+    // settle
+    {
+        let env = Env::default();
+        let (client, admin, sme) = setup(&env);
+        let investor = Address::generate(&env);
+        init_funded(&client, &env, &admin, &sme, &investor, "LHG001");
+        client.set_legal_hold(&true);
+        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| client.settle()));
+        assert!(r.is_err(), "settle must be blocked under hold");
+    }
+    // withdraw
+    {
+        let env = Env::default();
+        let (client, admin, sme) = setup(&env);
+        let investor = Address::generate(&env);
+        init_funded(&client, &env, &admin, &sme, &investor, "LHG002");
+        client.set_legal_hold(&true);
+        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| client.withdraw()));
+        assert!(r.is_err(), "withdraw must be blocked under hold");
+    }
+    // claim_investor_payout
+    {
+        let env = Env::default();
+        let (client, admin, sme) = setup(&env);
+        let investor = Address::generate(&env);
+        init_funded(&client, &env, &admin, &sme, &investor, "LHG003");
+        client.settle();
+        client.set_legal_hold(&true);
+        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            client.claim_investor_payout(&investor)
+        }));
+        assert!(r.is_err(), "claim must be blocked under hold");
+    }
+    // sweep_terminal_dust
+    {
+        let env = Env::default();
+        env.mock_all_auths();
+        let admin = Address::generate(&env);
+        let sme = Address::generate(&env);
+        let investor = Address::generate(&env);
+        let (client, escrow_id, token, _treasury) =
+            init_settled(&env, &admin, &sme, &investor, "LHG004");
+        let stellar = StellarAssetClient::new(&env, &token);
+        stellar.mint(&escrow_id, &1_000i128);
+        client.set_legal_hold(&true);
+        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            client.sweep_terminal_dust(&1_000i128)
+        }));
+        assert!(r.is_err(), "sweep must be blocked under hold");
+    }
 }

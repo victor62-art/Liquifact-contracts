@@ -1270,6 +1270,18 @@ impl LiquifactEscrow {
         escrow
     }
 
+    /// Finalize the escrow after funding is complete. Transitions status from **1 (funded)** to
+    /// **2 (settled)** so investors can claim their payout. Requires SME auth.
+    ///
+    /// Blocked while [`DataKey::LegalHold`] is active — see [`LiquifactEscrow::set_legal_hold`].
+    ///
+    /// # Status guard
+    /// Only permitted when [`InvoiceEscrow::status`] is **1 (funded)**. Open (0), settled (2), or
+    /// withdrawn (3) escrows reject the call.
+    ///
+    /// # Maturity gate
+    /// If [`InvoiceEscrow::maturity`] > 0, settlement is further gated on the ledger timestamp
+    /// reaching `maturity`. A zero maturity means no time gate.
     pub fn settle(env: Env) -> InvoiceEscrow {
         assert!(
             !Self::legal_hold_active(&env),
