@@ -1,5 +1,5 @@
 use super::*;
-use crate::{AdminProposedEvent, FundingTargetUpdated};
+use crate::{AdminProposedEvent, EscrowCloseSnapshot, FundingTargetUpdated};
 use soroban_sdk::Event;
 
 // Admin/governance operations: target changes, maturity changes, admin handover,
@@ -297,6 +297,40 @@ fn test_migrate_from_zero_uninitialized_panics() {
     let client = deploy(&env);
     // Uninitialized storage returns version 0; migrate(0) hits the no-path branch.
     client.migrate(&0u32);
+}
+
+#[test]
+fn test_read_model_summary_includes_optional_admin_fields() {
+    let env = Env::default();
+    let (client, admin, sme) = setup(&env);
+    let funding_token = Address::generate(&env);
+    let treasury = Address::generate(&env);
+
+    client.init(
+        &admin,
+        &soroban_sdk::String::from_str(&env, "TSUM01"),
+        &sme,
+        &TARGET,
+        &800i64,
+        &1000u64,
+        &funding_token,
+        &None,
+        &treasury,
+        &None,
+        &Some(100i128),
+        &Some(7u32),
+        &Some(10_000i128),
+    );
+
+    let summary = client.get_escrow_summary();
+
+    assert_eq!(summary.escrow, client.get_escrow());
+    assert_eq!(summary.legal_hold, client.get_legal_hold());
+    assert_eq!(summary.funding_close_snapshot, EscrowCloseSnapshot::None);
+    assert_eq!(summary.unique_funder_count, 0);
+    assert!(!summary.is_allowlist_active);
+    assert_eq!(summary.schema_version, client.get_version());
+    assert_eq!(client.get_max_per_investor_cap(), Some(10_000i128));
 }
 
 #[test]
