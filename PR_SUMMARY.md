@@ -8,6 +8,9 @@ Specifically, the contract requires that the selection of tier-based yield and c
 
 This PR adds a dedicated suite of unit tests in `escrow/src/tests/funding.rs` and updates the optional tiered yield ADR (`docs/adr/ADR-005-tiered-yield.md`) to document the complete test coverage.
 
+Closes #260
+Closes #244
+
 ---
 
 ## Technical Details & Invariants Tested
