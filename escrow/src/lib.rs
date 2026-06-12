@@ -259,6 +259,13 @@ pub enum EscrowError {
     CancelFundingNotOpen = 141,
     RefundNotCancelled = 142,
     NoContributionToRefund = 143,
+
+    /// `clear_legal_hold` was called without a prior `request_legal_hold_clear`.
+    LegalHoldClearRequestMissing = 150,
+    /// The two-phase legal-hold clear delay has not elapsed yet.
+    LegalHoldClearNotReady = 151,
+    /// Computing the legal-hold clear ready-at timestamp would overflow.
+    LegalHoldClearDelayOverflow = 152,
 }
 
 #[inline(always)]
