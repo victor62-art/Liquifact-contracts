@@ -1,6 +1,6 @@
 use super::super::external_calls::transfer_funding_token_with_balance_checks;
 use super::*;
-use crate::{DataKey, InvoiceEscrow, LegalHoldChanged};
+use crate::{CollateralRecordedEvt, DataKey, InvoiceEscrow, LegalHoldChanged};
 use soroban_sdk::{
     contract, contractimpl, vec, IntoVal, Map, MuxedAddress, Symbol, TryFromVal, Val,
 };
@@ -44,7 +44,7 @@ fn test_legal_hold_midflow_blocks_and_resumes_with_ordered_events() {
         &admin,
         &soroban_sdk::String::from_str(&env, "LEGAL_HOLD_INTEGRATION"),
         &sme,
-        &1_000_000_000i128,
+        &100_000_000i128,
         &1000i64,
         &0u64,
         &token,
@@ -98,7 +98,8 @@ fn test_legal_hold_midflow_blocks_and_resumes_with_ordered_events() {
     let event_count = env.events().all().events().len();
     assert!(
         event_count >= 6,
-        "expected at least 6 LegalHoldChanged events, got {event_count}"
+        "expected at least 6 LegalHoldChanged events, got {event_count}, all events: {:?}",
+        env.events().all().events()
     );
 }
 

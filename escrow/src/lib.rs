@@ -432,9 +432,14 @@ pub struct InvoiceEscrow {
 ///
 /// **Record-only:** this struct is stored for transparency and indexing. It does **not**
 /// custody, escrow, transfer, freeze, reserve, or verify assets. It also does not alter funding,
-/// settlement, SME withdrawal, investor-claim, or treasury-sweep behavior. Future versions that
-/// enforce asset movement or custody must introduce explicit APIs and must not treat historical
-/// records from this type as proof of locked assets.
+/// settlement, SME withdrawal, investor-claim, compliance hold, or treasury-sweep behavior.
+/// Future versions that enforce asset movement or custody must introduce explicit APIs and must
+/// not treat historical records from this type as proof of locked assets.
+///
+/// # Fields
+/// - `asset`: The off-chain asset symbol (cannot be empty).
+/// - `amount`: The reported collateral amount (must be positive).
+/// - `recorded_at`: The Soroban ledger timestamp when this record was written.
 #[contracttype]
 #[derive(Clone, Debug, PartialEq)]
 /// SME collateral commitment metadata (record-only).
@@ -661,10 +666,16 @@ pub struct LegalHoldClearRequested {
 
 /// SME collateral commitment metadata recorded.
 ///
-/// This event means only that [`DataKey::SmeCollateralPledge`] was written by the SME. It is not
-/// proof of custody, lien, encumbrance, asset control, or token movement. The event intentionally
-/// omits token contract, custodian, and transfer-receipt fields so consumers do not treat it as an
-/// on-chain encumbrance.
+/// This event is emitted when [`DataKey::SmeCollateralPledge`] is written or replaced by the SME.
+/// It acts as a metadata-update signal and is not proof of custody, lien, encumbrance, asset control,
+/// or token movement. The event intentionally omits token contract, custodian, and transfer-receipt
+/// fields so consumers do not treat it as an on-chain encumbrance.
+///
+/// # Fields
+/// - `name`: Hardcoded `coll_rec` symbol.
+/// - `invoice_id`: Symbol representation of the invoice.
+/// - `amount`: Newly recorded positive collateral amount.
+/// - `prior_amount`: Prior recorded collateral amount (or `0` if none existed).
 #[contractevent]
 pub struct CollateralRecordedEvt {
     #[topic]
@@ -1532,8 +1543,46 @@ impl LiquifactEscrow {
         Self::get_persistent_investor_claim_not_before(&env, investor)
     }
 
+    /// Retrieve the currently recorded SME collateral commitment metadata from storage.
+    /// Returns `None` if no commitment has been recorded yet.
     pub fn get_sme_collateral_commitment(env: Env) -> Option<SmeCollateralCommitment> {
         env.storage().instance().get(&DataKey::SmeCollateralPledge)
+    }
+
+    pub fn revoke_attestation_digest(env: Env, index: u32) {
+        let escrow = Self::get_escrow(env.clone());
+        escrow.admin.require_auth();
+
+        let log: Vec<BytesN<32>> = env
+            .storage()
+            .instance()
+            .get(&DataKey::AttestationAppendLog)
+            .unwrap_or_else(|| Vec::new(&env));
+        assert!(index < log.len(), "attestation index out of range");
+        assert!(
+            !env.storage()
+                .instance()
+                .has(&DataKey::AttestationRevoked(index)),
+            "attestation already revoked at index"
+        );
+
+        env.storage()
+            .instance()
+            .set(&DataKey::AttestationRevoked(index), &true);
+
+        AttestationDigestRevoked {
+            name: symbol_short!("att_rev"),
+            invoice_id: escrow.invoice_id.clone(),
+            index,
+        }
+        .publish(&env);
+    }
+
+    pub fn is_attestation_revoked(env: Env, index: u32) -> bool {
+        env.storage()
+            .instance()
+            .get(&DataKey::AttestationRevoked(index))
+            .unwrap_or(false)
     }
 
     pub fn is_investor_claimed(env: Env, investor: Address) -> bool {
@@ -1544,18 +1593,24 @@ impl LiquifactEscrow {
     ///
     /// **Metadata-only:** this writes [`DataKey::SmeCollateralPledge`] and emits
     /// [`CollateralRecordedEvt`]. It does not transfer tokens, reserve balances, verify custody,
-    /// create an on-chain encumbrance, or block unrelated flows.
+    /// create an on-chain encumbrance, or block any contract flows (such as settlement, withdrawals,
+    /// or claims).
     ///
-    /// # Validation
+    /// # Authorization
+    /// - Requires the signature of the configured SME (`InvoiceEscrow::sme_address`). Enforced via
+    ///   `sme_address.require_auth()` during execution.
     ///
-    /// - `amount` must be positive.
-    /// - `asset` must be a non-empty symbol.
-    /// - When replacing an existing commitment, the current ledger timestamp must not be
-    ///   earlier than the prior `recorded_at` (defense-in-depth against stale writes).
+    /// # Validation Rules
+    /// - **Positive Amount:** The `amount` parameter must be strictly positive (`amount > 0`).
+    /// - **Non-empty Asset Symbol:** The `asset` parameter must be a non-empty Symbol (not equal to `Symbol::new(&env, "")`).
+    /// - **Monotonic Timestamp:** When replacing an existing commitment, the current ledger timestamp must not
+    ///   be earlier than the prior `recorded_at` value (`now >= prior.recorded_at`).
     ///
     /// # Errors
-    /// Emits typed [`EscrowError`] codes for invalid collateral metadata, stale ledger timestamp,
-    /// or an uninitialized escrow.
+    /// - [`EscrowError::CollateralAmountNotPositive`] if `amount <= 0`.
+    /// - [`EscrowError::CollateralAssetEmpty`] if `asset` is empty.
+    /// - [`EscrowError::CollateralTimestampBackwards`] if the replacement timestamp is in the past.
+    /// - Standard uninitialized check via `load_escrow_require_sme`.
     pub fn record_sme_collateral_commitment(
         env: Env,
         asset: Symbol,
@@ -2049,10 +2104,7 @@ impl LiquifactEscrow {
             }
             // If prev > 0, preserve existing effective yield and claim lock
         } else {
-            assert!(
-                prev == 0,
-                "Additional principal after a tiered first deposit must use fund(), not fund_with_commitment()"
-            );
+            ensure(&env, prev == 0, EscrowError::TieredSecondDeposit);
             let (eff, lock) =
                 Self::effective_yield_for_commitment(&env, escrow.yield_bps, committed_lock_secs);
             investor_effective_yield_bps = eff;
