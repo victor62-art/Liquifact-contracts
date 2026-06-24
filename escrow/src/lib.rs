@@ -2071,9 +2071,10 @@ impl LiquifactEscrow {
             }
             // If prev > 0, preserve existing effective yield and claim lock
         } else {
-            assert!(
+            ensure(
+                &env,
                 prev == 0,
-                "Additional principal after a tiered first deposit must use fund(), not fund_with_commitment()"
+                EscrowError::TieredSecondDeposit,
             );
             let (eff, lock) =
                 Self::effective_yield_for_commitment(&env, escrow.yield_bps, committed_lock_secs);

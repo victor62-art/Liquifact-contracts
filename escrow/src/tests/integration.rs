@@ -44,7 +44,7 @@ fn test_legal_hold_midflow_blocks_and_resumes_with_ordered_events() {
         &admin,
         &soroban_sdk::String::from_str(&env, "LEGAL_HOLD_INTEGRATION"),
         &sme,
-        &1_000_000_000i128,
+        &100_000_000i128,
         &1000i64,
         &0u64,
         &token,
