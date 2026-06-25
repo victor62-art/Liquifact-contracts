@@ -1,20 +1,14 @@
-# Beneficiary Rotation System
+# Beneficiary Rotation (SME) — dual authorization & downstream routing
 
-The LiquiFact escrow contract provides a governed on-chain SME beneficiary rotation via the
-`rotate_beneficiary` entrypoint.
+The LiquiFact escrow contract supports a governed on-chain rotation of the **SME beneficiary** (the address that receives the escrow’s funded principal on `withdraw`).
 
-This operation updates the stored `sme_address` atomically so the new SME immediately becomes the
-sole authority for `withdraw`, `settle`, and `record_sme_collateral_commitment`.
+This document is the authoritative, code-accurate reference for the `rotate_beneficiary` flow, including its **dual-authorization requirement**, its **exact guard ordering**, and its **operator-facing rejection codes**.
 
-## Overview
+> **Downstream impact:** `rotate_beneficiary` changes the `sme_address` stored in contract state. Later SME-gated disbursement (`withdraw`) uses the *current* `sme_address`, so rotation determines where the funded principal is routed.
 
-- `rotate_beneficiary` requires dual consent from both the current SME and the admin.
-- Rotation is allowed only in non-terminal escrow states: `0` (open) or `1` (funded).
-- Rotation is blocked while a legal hold is active.
-- Rotation to the current SME address is rejected.
-- A `BeneficiaryRotated` event is emitted on success.
+---
 
-## Entrypoint
+## Entry point
 
 ### `rotate_beneficiary`
 
@@ -22,61 +16,123 @@ sole authority for `withdraw`, `settle`, and `record_sme_collateral_commitment`.
 pub fn rotate_beneficiary(env: Env, new_sme_address: Address) -> InvoiceEscrow
 ```
 
-#### Requirements
+#### What it updates
 
-- `new_sme_address` must differ from the current `sme_address`.
-- Escrow status must be `0` (open) or `1` (funded).
-- `escrow.sme_address.require_auth()` must succeed.
-- `escrow.admin.require_auth()` must succeed.
-- `LegalHold` must not be active.
+- `InvoiceEscrow::sme_address` is atomically updated from the current SME to `new_sme_address`.
 
-#### Effects
+#### Authorization model (why both signatures are required)
 
-- Updates `InvoiceEscrow::sme_address` to `new_sme_address`.
-- Persists the updated escrow state.
-- Emits `BeneficiaryRotated` with both prior and new SME addresses.
-- The new SME immediately gains authority for SME-gated actions.
+This entrypoint enforces **dual authorization**:
 
-#### Errors
+1. **Outgoing SME** (`escrow.sme_address.require_auth()`)
+2. **Current admin** (`escrow.admin.require_auth()`)
 
-- `LegalHoldBlocksBeneficiaryRotation` when legal hold is active.
-- `RotationNotOpen` when the escrow has reached a terminal state.
-- `NewSmeSameAsCurrent` when the new SME address equals the current SME.
+Both must sign in the same transaction. This prevents unilateral redirection of the withdrawal destination by:
 
-## Authorization Model
+- a compromised admin key alone (admin cannot rotate without the SME signing), and
+- a compromised SME key alone (SME cannot rotate without the admin signing).
 
-`rotate_beneficiary` enforces dual authorization:
+#### Exact guard ordering (code-accurate)
 
-1. Current SME authorization via `escrow.sme_address.require_auth()`.
-2. Current admin authorization via `escrow.admin.require_auth()`.
+`rotate_beneficiary` evaluates guards in this order:
 
-This ensures neither party can rotate the SME beneficiary alone.
+1. **Legal-hold gate (read-only)**
+   - Condition: `!legal_hold_active`
+   - If `LegalHold` is active, the call aborts immediately.
 
-## State & Security Notes
+2. **State gate (allowed states only)**
+   - Condition: `escrow.status == 0 || escrow.status == 1`
+   - Meaning:
+     - `0` = **open** (pre-settlement)
+     - `1` = **funded** (still pre-settlement)
 
-- Rotation is prohibited in terminal states (`settled`, `withdrawn`, `cancelled`).
-- After rotation, the new SME controls all SME-authorized entrypoints.
-- Collateral metadata ownership transfers with the new SME because
-  `record_sme_collateral_commitment` is also authenticated against the stored `sme_address`.
+3. **No-op guard**
+   - Condition: `new_sme_address != escrow.sme_address`
+   - Rotating to the current address is rejected.
 
-## Event
+4. **Dual authorization**
+   - `escrow.sme_address.require_auth()`
+   - `escrow.admin.require_auth()`
 
-`BeneficiaryRotated` is emitted after a successful rotation.
+5. **Storage write + event emission**
+   - Persists the updated `sme_address` into `DataKey::Escrow`.
+   - Emits `BeneficiaryRotated`.
+
+---
+
+## Allowed states
+
+Rotation is only permitted in **pre-settlement** states:
+
+- `status = 0` (**open**)
+- `status = 1` (**funded**)
+
+Rotation is rejected in terminal/post-settlement states:
+
+- `status = 2` (**settled**)
+- `status = 3` (**withdrawn**)
+- `status = 4` (**cancelled**)
+
+---
+
+## Operator-facing rejection codes
+
+These are the typed `EscrowError` variants emitted by `rotate_beneficiary`:
+
+- **`LegalHoldBlocksBeneficiaryRotation` (160)**
+  - Trigger: legal hold is active.
+  - Meaning: compliance/legal hold blocks beneficiary rotation.
+
+- **`RotationNotOpen` (161)**
+  - Trigger: escrow is not in a pre-settlement state.
+  - Meaning: `status` must be `0` (open) or `1` (funded).
+
+- **`NewSmeSameAsCurrent` (162)**
+  - Trigger: `new_sme_address == escrow.sme_address`.
+  - Meaning: no-op rotations are rejected.
+
+---
+
+## Downstream effect on `withdraw`
+
+`withdraw` is SME-gated and sends the funded principal to the **current** stored `sme_address`.
+
+So after a successful rotation:
+
+- `withdraw` will route disbursement to the **new** SME beneficiary.
+- the new SME becomes the authority for subsequent SME-gated flows.
+
+### Eventing for indexers
+
+- `rotate_beneficiary` emits **`BeneficiaryRotated`** (with `prior_sme` and `new_sme`).
+- After rotation, later SME disbursement emits **`SmeWithdrew`**.
+
+Indexers should:
+
+1. update their internal “active SME” mapping on `BeneficiaryRotated`, then
+2. attribute a later `SmeWithdrew` to the SME that was current after the rotation.
+
+---
+
+## Event schema
+
+### `BeneficiaryRotated`
+
+Emitted after successful `rotate_beneficiary`.
+
+Fields:
 
 - `name`: `ben_rot`
-- `invoice_id`: invoice identifier
+- `invoice_id`: the escrow invoice id
 - `prior_sme`: previous SME address
 - `new_sme`: updated SME address
 
-## Example
+---
 
-```ignore
-let updated = client.rotate_beneficiary(&new_sme_address);
-assert_eq!(updated.sme_address, new_sme_address);
-```
+## Security notes (operator guidance)
 
-## Notes for Integrators
+- Rotation is intentionally **not** a proposal/accept flow. It is a single call requiring both the outgoing SME and admin signatures.
+- Legal hold blocks beneficiary rotation before any authorization checks run.
+- Rotation only affects the withdrawal destination (`sme_address`). It does not move tokens directly; token routing happens in `withdraw`.
+- If you operate with multisig governance, ensure the admin key used for `rotate_beneficiary` signing cannot be invoked unilaterally without SME consent (and vice-versa), matching the intended dual-control policy.
 
-- There is no proposal/accept timelock flow in the contract implementation.
-- Off-chain systems should treat `sme_address` as updatable via this governed entrypoint.
-- Legal hold must be cleared before rotation can succeed.
