@@ -213,3 +213,17 @@ A `#[contracttype]` enum representing the optional `FundingCloseSnapshot`:
 
 - `None` — Escrow is not yet funded; no close snapshot exists.
 - `Some(FundingCloseSnapshot)` — The pro-rata denominator snapshot captured when the escrow first transitioned to **funded**.
+
+---
+
+## `get_investors(start: u32, limit: u32) → Vec<Address>`
+
+**Storage key:** `DataKey::InvestorIndex`
+
+Returns a paginated list of investor addresses who have contributed to the escrow.
+
+- **Pure Read** — no authorization required.
+- **Pagination** — uses `start` (0-based) and `limit` to support paging.
+- **Bounded limit** — the `limit` parameter is capped internally (at 50) to prevent CPU/memory resource exhaustion.
+- **Legacy Compatibility (ADR-007)** — returns an empty vector for legacy contracts deployed before the introduction of the investor index, ensuring backward compatibility.
+
