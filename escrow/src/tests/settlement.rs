@@ -1661,3 +1661,124 @@ fn test_funding_blocked_after_partial_settle() {
     let late_investor = Address::generate(&env);
     client.fund(&late_investor, &1_000i128);
 }
+
+// ── get_settled_at tests ──────────────────────────────────────────────────────
+
+/// `get_settled_at` returns `None` before the escrow is settled (pre-settle state).
+#[test]
+fn settled_at_is_none_before_settle() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin, sme) = setup(&env);
+    default_init(&client, &env, &admin, &sme);
+
+    // Not yet funded — should be None.
+    assert!(client.get_settled_at().is_none(), "settled_at must be None before settle");
+
+    // Fund to target (status 1) — still None.
+    fund_to_target(&client, &env);
+    assert!(client.get_settled_at().is_none(), "settled_at must be None after funding, before settle");
+}
+
+/// `get_settled_at` returns `Some(timestamp)` equal to the ledger time at `settle()`.
+#[test]
+fn settled_at_recorded_at_settle() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin, sme) = setup(&env);
+    default_init(&client, &env, &admin, &sme);
+    fund_to_target(&client, &env);
+
+    let settle_ts: u64 = 9_999;
+    env.ledger().with_mut(|l| l.timestamp = settle_ts);
+    client.settle();
+
+    let stored = client.get_settled_at().expect("settled_at must be Some after settle");
+    assert_eq!(stored, settle_ts, "settled_at must equal the ledger timestamp at settle()");
+}
+
+/// `get_settled_at` value is stable — subsequent reads return the same timestamp.
+#[test]
+fn settled_at_is_stable_after_settle() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin, sme) = setup(&env);
+    default_init(&client, &env, &admin, &sme);
+    fund_to_target(&client, &env);
+
+    let settle_ts: u64 = 42_000;
+    env.ledger().with_mut(|l| l.timestamp = settle_ts);
+    client.settle();
+
+    // Advance ledger — stored value must not change.
+    env.ledger().with_mut(|l| l.timestamp = settle_ts + 10_000);
+    let stored = client.get_settled_at().expect("settled_at must remain Some");
+    assert_eq!(stored, settle_ts, "settled_at must not change after additional ledger advancement");
+}
+
+/// `settle()` with maturity = 0 (no time-lock) still records the correct timestamp.
+#[test]
+fn settled_at_recorded_no_maturity_escrow() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin, sme) = setup(&env);
+    // default_init uses maturity=0 (no lock).
+    default_init(&client, &env, &admin, &sme);
+    fund_to_target(&client, &env);
+
+    let ts: u64 = 1_234_567;
+    env.ledger().with_mut(|l| l.timestamp = ts);
+    client.settle();
+
+    assert_eq!(
+        client.get_settled_at(),
+        Some(ts),
+        "settled_at must be recorded even when maturity == 0"
+    );
+}
+
+/// `settle()` with a positive maturity records the timestamp at the moment the call succeeds.
+#[test]
+fn settled_at_recorded_with_maturity() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (client, admin, sme) = setup(&env);
+
+    let maturity: u64 = 5_000;
+    // Initialize with a maturity lock.
+    let sac = env.register_stellar_asset_contract_v2(Address::generate(&env));
+    let token_id = sac.address();
+    let (admin_addr, sme_addr) = free_addresses(&env);
+    client.init(
+        &admin_addr,
+        &sme_addr,
+        &100_000i128,
+        &TARGET,
+        &500i64,
+        &maturity,
+        &token_id,
+        &Address::generate(&env),
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+    );
+
+    let investor = Address::generate(&env);
+    install_stellar_asset_token(&env, &sac, &investor, TARGET);
+    client.fund(&investor, &TARGET);
+
+    // Advance ledger past maturity.
+    let settle_ts = maturity + 100;
+    env.ledger().with_mut(|l| l.timestamp = settle_ts);
+    client.settle();
+
+    assert_eq!(
+        client.get_settled_at(),
+        Some(settle_ts),
+        "settled_at must equal the ledger timestamp when settle() succeeds with maturity gate"
+    );
+}

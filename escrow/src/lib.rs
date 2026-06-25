@@ -492,6 +492,12 @@ pub enum DataKey {
     DistributedPrincipal,
     /// Optional funding deadline (ledger timestamp); after it passes, new funds are rejected.
     FundingDeadline,
+    /// Ledger timestamp (seconds since Unix epoch) recorded exactly once when `status` transitions
+    /// from 1 → 2 inside [`LiquifactEscrow::settle`].
+    ///
+    /// **Write-once:** written by `settle` only; the getter returns [`None`] on legacy instances
+    /// where this key was never written (ADR-007 additive-key policy).
+    SettledAt,
 }
 
 // --- Data types ---
@@ -1668,6 +1674,19 @@ impl LiquifactEscrow {
         env.storage().instance().get(&DataKey::FundingCloseSnapshot)
     }
 
+    /// Returns the ledger timestamp (seconds since Unix epoch) at which [`LiquifactEscrow::settle`]
+    /// transitioned status from 1 → 2, or [`None`] if the escrow has not yet been settled.
+    ///
+    /// **Additive-key policy (ADR-007):** legacy escrow instances that were settled before this key
+    /// was introduced will return [`None`] because [`DataKey::SettledAt`] was never written.
+    ///
+    /// # Returns
+    /// - `Some(timestamp)` — the ledger timestamp at the moment `settle()` was called.
+    /// - `None` — escrow is not yet settled, or is a legacy instance predating this key.
+    pub fn get_settled_at(env: Env) -> Option<u64> {
+        env.storage().instance().get(&DataKey::SettledAt)
+    }
+
     /// Effective yield (bps) for this investor after their **first** deposit; later [`LiquifactEscrow::fund`]
     /// calls add principal at this rate. Defaults to [`InvoiceEscrow::yield_bps`] when unset (legacy positions).
     ///
@@ -2499,6 +2518,10 @@ impl LiquifactEscrow {
         }
 
         escrow.status = 2;
+
+        // Write-once settlement timestamp (ADR-007 additive-key policy).
+        // settle() is only reachable from status 1, so this key is set exactly once per escrow.
+        env.storage().instance().set(&DataKey::SettledAt, &now);
 
         env.storage().instance().set(&DataKey::Escrow, &escrow);
 
