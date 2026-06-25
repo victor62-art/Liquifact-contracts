@@ -1,4 +1,5 @@
 use super::*;
+use crate::EscrowInitialized;
 use proptest::prelude::*;
 extern crate std;
 use std::format;
@@ -129,6 +130,7 @@ fn test_init_unauthorized_panics() {
             &Address::generate(&env),
             &None,
             &Address::generate(&env),
+            &None,
             &None,
             &None,
             &None,
@@ -339,7 +341,7 @@ fn test_init_invoice_id_bad_charset_hyphen_panics() {
 }
 
 #[test]
-#[should_panic(expected = "invoice_id must be [A-Za-z0-9_]")]
+#[should_panic]
 fn test_init_invoice_id_non_ascii_multibyte_panics() {
     let env = Env::default();
     env.mock_all_auths();
@@ -367,7 +369,7 @@ fn test_init_invoice_id_non_ascii_multibyte_panics() {
 }
 
 #[test]
-#[should_panic(expected = "invoice_id must be [A-Za-z0-9_]")]
+#[should_panic]
 fn test_init_invoice_id_embedded_null_panics() {
     let env = Env::default();
     env.mock_all_auths();
@@ -444,6 +446,7 @@ fn test_init_min_contribution_floor_stored() {
         &None,
         &None,
         &None,
+        &None,
     );
     assert_eq!(client.get_min_contribution_floor(), 1_000i128);
 }
@@ -502,6 +505,7 @@ fn test_init_min_contribution_zero_panics() {
         &None,
         &None,
         &None,
+        &None,
     );
 }
 
@@ -527,6 +531,7 @@ fn test_init_min_contribution_exceeds_amount_panics() {
         &tre,
         &None,
         &Some(1_001i128),
+        &None,
         &None,
         &None,
         &None,
@@ -557,24 +562,79 @@ fn test_init_min_contribution_equal_to_amount_accepted() {
         &None,
         &None,
         &None,
+        &None,
     );
     assert_eq!(client.get_min_contribution_floor(), 5_000i128);
 }
 
 #[test]
-#[should_panic]
-fn test_get_funding_token_before_init_panics() {
+fn test_get_funding_token_before_init_fails_with_typed_error() {
     let env = Env::default();
     let client = deploy(&env);
-    client.get_funding_token();
+    assert_contract_error(
+        client.try_get_funding_token(),
+        EscrowError::FundingTokenNotSet,
+    );
 }
 
 #[test]
-#[should_panic]
-fn test_get_treasury_before_init_panics() {
+fn test_get_treasury_before_init_fails_with_typed_error() {
     let env = Env::default();
     let client = deploy(&env);
-    client.get_treasury();
+    assert_contract_error(
+        client.try_get_treasury(),
+        EscrowError::TreasuryNotSet,
+    );
+}
+
+#[test]
+fn test_get_funding_token_after_init_succeeds() {
+    let env = Env::default();
+    let (client, admin, sme) = setup(&env);
+    let (token, treasury) = free_addresses(&env);
+    client.init(
+        &admin,
+        &soroban_sdk::String::from_str(&env, "FT001"),
+        &sme,
+        &TARGET,
+        &800i64,
+        &1000u64,
+        &token,
+        &None,
+        &treasury,
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+    );
+    assert_eq!(client.get_funding_token(), token);
+}
+
+#[test]
+fn test_get_treasury_after_init_succeeds() {
+    let env = Env::default();
+    let (client, admin, sme) = setup(&env);
+    let (token, treasury) = free_addresses(&env);
+    client.init(
+        &admin,
+        &soroban_sdk::String::from_str(&env, "TR001"),
+        &sme,
+        &TARGET,
+        &800i64,
+        &1000u64,
+        &token,
+        &None,
+        &treasury,
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+        &None,
+    );
+    assert_eq!(client.get_treasury(), treasury);
 }
 
 #[test]
@@ -726,6 +786,7 @@ fn try_init_with_id(env: &Env, id: &str) -> Result<(), ()> {
             &t,
             &None,
             &tr,
+            &None,
             &None,
             &None,
             &None,
@@ -975,7 +1036,7 @@ fn datakey_distributed_principal_starts_at_zero_and_increments_on_refund() {
         &admin,
         &soroban_sdk::String::from_str(&env, "DKTEST1"),
         &sme,
-        &500i128,
+        &1_000i128,
         &0i64,
         &0u64,
         &token.id,

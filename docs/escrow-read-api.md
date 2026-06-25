@@ -203,6 +203,9 @@ A `#[contracttype]` struct containing:
 - `unique_funder_count: u32` — Distinct address count of contributors.
 - `is_allowlist_active: bool` — True if the investor allowlist is active.
 - `schema_version: u32` — The schema version of the contract state.
+- `sme_collateral_commitment: Option<SmeCollateralCommitment>` — SME collateral pledge metadata, or `None` when never recorded.
+- `has_primary_attestation: bool` — True when a primary attestation hash has been bound via `bind_primary_attestation_hash`.
+- `attestation_log_length: u32` — Number of entries currently in the attestation append log.
 
 ### Sub-type: `EscrowCloseSnapshot`
 
