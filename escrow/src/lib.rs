@@ -365,7 +365,7 @@ pub enum EscrowError {
     NoPendingAdmin = 163,
     /// The contract's funding-token balance is less than `funded_amount` at withdraw time.
     /// Funds must be custodied in this contract before the SME can pull them.
-    InsufficientContractBalance = 164,
+    InsufficientContractBalance = 165,
 }
 
 #[inline(always)]
@@ -2558,6 +2558,32 @@ impl LiquifactEscrow {
         .publish(&env);
 
         escrow
+    }
+
+    /// Read-only check: whether this escrow is currently settleable.
+    ///
+    /// Returns `true` when all of the following hold:
+    /// - `status == 1` (funded)
+    /// - `maturity == 0` **or** `env.ledger().timestamp() >= maturity`
+    /// - No legal hold is active
+    ///
+    /// # Security
+    /// Pure read — no authorization required, no state mutation.
+    pub fn is_settleable(env: Env) -> bool {
+        if Self::legal_hold_active(&env) {
+            return false;
+        }
+        let escrow = Self::get_escrow(env.clone());
+        if escrow.status != 1 {
+            return false;
+        }
+        if escrow.maturity > 0 {
+            let now = env.ledger().timestamp();
+            if now < escrow.maturity {
+                return false;
+            }
+        }
+        true
     }
 
     /// SME pulls funded liquidity. Transfers `funded_amount` of the bound funding token

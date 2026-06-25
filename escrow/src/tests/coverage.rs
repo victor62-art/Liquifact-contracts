@@ -4,7 +4,7 @@ use super::{
 };
 use crate::{CollateralCommitmentSnapshot, DataKey, EscrowCloseSnapshot, EscrowError, YieldTier};
 use soroban_sdk::{
-    testutils::{Address as _, Ledger},
+    testutils::{Address as _, Events, Ledger},
     Address, BytesN, Env, Error, InvokeError, Vec as SorobanVec,
 };
 
