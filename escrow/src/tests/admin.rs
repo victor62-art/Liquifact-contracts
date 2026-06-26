@@ -201,11 +201,13 @@ fn test_transfer_admin_emits_proposal_and_deprecation_events_in_order() {
 
     // Capture event count before the call so the assertion uses a delta and
     // stays robust against any future init-time event additions.
-    let events_before = env.events().all().len();
+    let all_before = env.events().all();
+    let events_before = all_before.events().len();
 
     client.transfer_admin(&new_admin);
 
-    let events = env.events().all();
+    let all_events = env.events().all();
+    let events = all_events.events();
     // Successful shim call publishes exactly 2 extra events: the inner
     // AdminProposedEvent plus the DeprecatedTransferAdminUsed.
     assert_eq!(
@@ -248,11 +250,13 @@ fn test_propose_admin_does_not_emit_deprecation_event() {
     default_init(&client, &env, &admin, &sme);
 
     // Capture event count before the call so the assertion is delta-based.
-    let events_before = env.events().all().len();
+    let all_before = env.events().all();
+    let events_before = all_before.events().len();
 
     client.propose_admin(&new_admin);
 
-    let events = env.events().all();
+    let all_events = env.events().all();
+    let events = all_events.events();
     // propose_admin publishes exactly one extra event: its own AdminProposedEvent,
     // nothing else.
     assert_eq!(
@@ -301,7 +305,8 @@ fn test_transfer_admin_deprecation_event_proposed_address_matches_call_arg() {
 
     client.transfer_admin(&new_admin);
 
-    let events = env.events().all();
+    let all_events = env.events().all();
+    let events = all_events.events();
     assert_eq!(
         events.last().unwrap().clone(),
         crate::DeprecatedTransferAdminUsed {
@@ -330,7 +335,8 @@ fn test_transfer_admin_does_not_emit_deprecation_event_on_rejection() {
 
     // Capture event count before the rejected call so the assertion stays
     // robust against any future init-time event additions.
-    let events_before = env.events().all().len();
+    let all_before = env.events().all();
+    let events_before = all_before.events().len();
 
     // Same-address proposal: propose_admin aborts with `NewAdminSameAsCurrent`.
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -338,7 +344,8 @@ fn test_transfer_admin_does_not_emit_deprecation_event_on_rejection() {
     }));
     assert!(result.is_err(), "transfer_admin(current_admin) must reject");
 
-    let events = env.events().all();
+    let all_events = env.events().all();
+    let events = all_events.events();
     assert_eq!(
         events.len(),
         events_before,
