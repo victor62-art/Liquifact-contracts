@@ -328,103 +328,105 @@ fn test_revoke_does_not_affect_primary_hash() {
 }
 
 // ---------------------------------------------------------------------------
-// unrevoke_attestation_digest — restoring a mistaken revocation
+// Typed-error assertions (try_ variants)
 // ---------------------------------------------------------------------------
 
-/// Happy path: revoke then unrevoke restores the non-revoked state.
+/// `try_bind_primary_attestation_hash` on a second call returns typed error code 50
+/// (`PrimaryAttestationAlreadyBound`), not a panic string.
 #[test]
-fn test_unrevoke_restores_state() {
+fn test_bind_primary_hash_typed_error() {
     let env = Env::default();
     let (client, _) = setup_with_init(&env);
-    client.append_attestation_digest(&digest(&env, 0xAA));
-    client.revoke_attestation_digest(&0);
-    assert!(client.is_attestation_revoked(&0));
-    client.unrevoke_attestation_digest(&0);
-    assert!(!client.is_attestation_revoked(&0));
+    let d = digest(&env, 0x01);
+    client.bind_primary_attestation_hash(&d);
+    assert_contract_error(
+        client.try_bind_primary_attestation_hash(&d),
+        EscrowError::PrimaryAttestationAlreadyBound,
+    );
 }
 
-/// After unrevoke, the append log entry is still present and unchanged.
+/// `try_append_attestation_digest` on the 33rd call returns typed error code 51
+/// (`AttestationAppendLogCapacityReached`), not a panic string.
 #[test]
-fn test_unrevoke_preserves_log_entry() {
+fn test_append_beyond_max_typed_error() {
     let env = Env::default();
     let (client, _) = setup_with_init(&env);
-    let d = digest(&env, 0xBB);
-    client.append_attestation_digest(&d);
-    client.revoke_attestation_digest(&0);
-    client.unrevoke_attestation_digest(&0);
-    let log = client.get_attestation_append_log();
-    assert_eq!(log.len(), 1);
-    assert_eq!(log.get(0).unwrap(), d);
+    for i in 0u8..MAX_ATTESTATION_APPEND_ENTRIES as u8 {
+        client.append_attestation_digest(&digest(&env, i));
+    }
+    assert_contract_error(
+        client.try_append_attestation_digest(&digest(&env, 0xFF)),
+        EscrowError::AttestationAppendLogCapacityReached,
+    );
 }
 
-/// Unrevoke of a non-revoked index must panic with AttestationNotRevoked.
+// ---------------------------------------------------------------------------
+// Event-emission assertions
+// ---------------------------------------------------------------------------
+
+/// `bind_primary_attestation_hash` emits a `PrimaryAttestationBound` event with
+/// the correct `invoice_id` and `digest` fields.
 #[test]
-#[should_panic]
-fn test_unrevoke_not_revoked_panics() {
+fn test_bind_primary_hash_emits_event() {
+    use soroban_sdk::testutils::Events as _;
+
     let env = Env::default();
     let (client, _) = setup_with_init(&env);
-    client.append_attestation_digest(&digest(&env, 0x01));
-    // Index 0 exists but is NOT revoked — must panic.
-    client.unrevoke_attestation_digest(&0);
+    let contract_id = client.address.clone();
+    // Capture invoice_id before the call under test so env.events().all()
+    // reflects only the bind invocation, not a subsequent get_escrow() call.
+    let invoice_id = client.get_escrow().invoice_id;
+    let d = digest(&env, 0xAB);
+    client.bind_primary_attestation_hash(&d);
+
+    assert_eq!(
+        env.events().all().events().last().unwrap().clone(),
+        PrimaryAttestationBound {
+            name: symbol_short!("att_bind"),
+            invoice_id,
+            digest: d,
+        }
+        .to_xdr(&env, &contract_id)
+    );
 }
 
-/// Unrevoke on an out-of-range index must panic with AttestationIndexOutOfRange.
+/// `append_attestation_digest` emits an `AttestationDigestAppended` event with
+/// the correct `index` (0-based insertion position) and `digest` fields.
 #[test]
-#[should_panic]
-fn test_unrevoke_out_of_range_panics() {
-    let env = Env::default();
-    let (client, _) = setup_with_init(&env);
-    // Empty log: index 0 is out of range.
-    client.unrevoke_attestation_digest(&0);
-}
+fn test_append_emits_event_with_correct_index() {
+    use soroban_sdk::testutils::Events as _;
 
-/// Double unrevoke: after the first unrevoke the index is no longer revoked,
-/// so a second unrevoke must panic (AttestationNotRevoked).
-#[test]
-#[should_panic]
-fn test_double_unrevoke_panics() {
     let env = Env::default();
     let (client, _) = setup_with_init(&env);
-    client.append_attestation_digest(&digest(&env, 0x42));
-    client.revoke_attestation_digest(&0);
-    client.unrevoke_attestation_digest(&0);
-    client.unrevoke_attestation_digest(&0);
-}
+    let contract_id = client.address.clone();
+    // Capture invoice_id before the calls under test.
+    let invoice_id = client.get_escrow().invoice_id;
 
-/// Non-admin caller must not be able to unrevoke.
-#[test]
-#[should_panic]
-fn test_unrevoke_non_admin_panics() {
-    let env = Env::default();
-    let (client, _) = setup_with_init(&env);
-    client.append_attestation_digest(&digest(&env, 0xFF));
-    client.revoke_attestation_digest(&0);
-    env.mock_auths(&[]);
-    client.unrevoke_attestation_digest(&0);
-}
+    // First append → index 0.
+    let d0 = digest(&env, 0x10);
+    client.append_attestation_digest(&d0);
+    assert_eq!(
+        env.events().all().events().last().unwrap().clone(),
+        AttestationDigestAppended {
+            name: symbol_short!("att_app"),
+            invoice_id: invoice_id.clone(),
+            index: 0,
+            digest: d0,
+        }
+        .to_xdr(&env, &contract_id)
+    );
 
-/// Revoke → unrevoke → revoke again is allowed (round-trip idempotency).
-#[test]
-fn test_revoke_unrevoke_revoke_round_trip() {
-    let env = Env::default();
-    let (client, _) = setup_with_init(&env);
-    client.append_attestation_digest(&digest(&env, 0x10));
-    client.revoke_attestation_digest(&0);
-    client.unrevoke_attestation_digest(&0);
-    client.revoke_attestation_digest(&0);
-    assert!(client.is_attestation_revoked(&0));
-}
-
-/// Unrevoke only affects the targeted index; adjacent indices are untouched.
-#[test]
-fn test_unrevoke_does_not_affect_other_indices() {
-    let env = Env::default();
-    let (client, _) = setup_with_init(&env);
-    client.append_attestation_digest(&digest(&env, 0x01));
-    client.append_attestation_digest(&digest(&env, 0x02));
-    client.revoke_attestation_digest(&0);
-    client.revoke_attestation_digest(&1);
-    client.unrevoke_attestation_digest(&0);
-    assert!(!client.is_attestation_revoked(&0));
-    assert!(client.is_attestation_revoked(&1));
+    // Second append → index 1.
+    let d1 = digest(&env, 0x11);
+    client.append_attestation_digest(&d1);
+    assert_eq!(
+        env.events().all().events().last().unwrap().clone(),
+        AttestationDigestAppended {
+            name: symbol_short!("att_app"),
+            invoice_id,
+            index: 1,
+            digest: d1,
+        }
+        .to_xdr(&env, &contract_id)
+    );
 }

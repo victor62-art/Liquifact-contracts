@@ -440,9 +440,7 @@ pub enum EscrowError {
     NoPendingAdmin = 81,
     /// The contract's funding-token balance is less than `funded_amount` at withdraw time.
     /// Funds must be custodied in this contract before the SME can pull them.
-    InsufficientContractBalance = 164,
-    /// Funding deadline has passed, new deposits are rejected.
-    FundingDeadlinePassed = 165,
+    InsufficientContractBalance = 165,
 }
 
 #[inline(always)]
@@ -1628,6 +1626,28 @@ impl LiquifactEscrow {
             .funding_target
             .saturating_sub(escrow.funded_amount)
             .max(0)
+    }
+
+    /// Returns `true` when `settle` would succeed without a legal-hold or maturity error:
+    /// escrow is funded (`status == 1`), no legal hold is active, and maturity is satisfied
+    /// (either `maturity == 0` or `ledger.timestamp() >= maturity`).
+    pub fn is_settleable(env: Env) -> bool {
+        let escrow = Self::get_escrow(env.clone());
+        if escrow.status != 1 {
+            return false;
+        }
+        let hold: bool = env
+            .storage()
+            .instance()
+            .get(&DataKey::LegalHold)
+            .unwrap_or(false);
+        if hold {
+            return false;
+        }
+        if escrow.maturity > 0 && env.ledger().timestamp() < escrow.maturity {
+            return false;
+        }
+        true
     }
 
     /// Rotate the beneficiary (SME) address that receives liquidity on

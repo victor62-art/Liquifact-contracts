@@ -1953,7 +1953,7 @@ fn test_claim_not_before_getter() {
         &sme,
         &100,
         &10,
-        &50_000,
+        &0, // maturity=0: no maturity lock, so commitment lock has no upper bound
         &token,
         &None,
         &treasury,

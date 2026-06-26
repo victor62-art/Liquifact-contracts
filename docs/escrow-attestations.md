@@ -332,7 +332,9 @@ storage key; the digest at index N is unchanged.
 
 ## Test coverage
 
-Attestation behavior is covered in [`escrow/src/test/attestations.rs`](../escrow/src/test/attestations.rs):
+Attestation behavior is covered in [`escrow/src/tests/attestations.rs`](../escrow/src/tests/attestations.rs):
+
+### Write-once invariant (`bind_primary_attestation_hash`)
 
 | Test | What it proves |
 |---|---|
@@ -341,22 +343,41 @@ Attestation behavior is covered in [`escrow/src/test/attestations.rs`](../escrow
 | `test_bind_primary_hash_same_digest_panics` | Second bind (same digest) panics |
 | `test_bind_primary_hash_different_digest_panics` | Second bind (different digest) panics |
 | `test_bind_primary_hash_non_admin_panics` | Non-admin bind is rejected |
+| `test_bind_primary_hash_typed_error` | `try_bind_primary_attestation_hash` returns typed error code 50 (`PrimaryAttestationAlreadyBound`) on second call |
+| `test_bind_primary_hash_emits_event` | Emits `PrimaryAttestationBound` with correct `invoice_id` and `digest` |
+
+### Bounded append log (`append_attestation_digest`)
+
+| Test | What it proves |
+|---|---|
 | `test_append_log_empty_before_first_append` | Log is empty before first append |
 | `test_append_single_entry_stored` | Single append stored at index 0 |
 | `test_append_multiple_entries_ordered` | Insertion order preserved |
 | `test_append_exactly_max_entries_succeeds` | 32nd entry succeeds (boundary inclusive) |
 | `test_append_beyond_max_panics` | 33rd entry panics |
-| `test_append_duplicate_digest_allowed` | Duplicate digests accepted |
+| `test_append_beyond_max_typed_error` | `try_append_attestation_digest` returns typed error code 51 (`AttestationAppendLogCapacityReached`) on 33rd call |
+| `test_append_duplicate_digest_allowed` | Duplicate digests accepted (log is audit trail, not a set) |
 | `test_append_non_admin_panics` | Non-admin append is rejected |
+| `test_append_emits_event_with_correct_index` | Emits `AttestationDigestAppended` with correct `index` (0-based) and `digest` for each call |
+
+### Independence
+
+| Test | What it proves |
+|---|---|
 | `test_primary_bind_does_not_affect_append_log` | Primary bind leaves log empty |
 | `test_append_does_not_affect_primary_hash` | Append leaves primary hash `None` |
 | `test_primary_and_append_coexist` | Both can be set independently |
+
+### Revocation tombstone (`revoke_attestation_digest`)
+
+| Test | What it proves |
+|---|---|
 | `test_revoke_single_entry` | Happy path: revoke index 0, `is_attestation_revoked` returns `true` |
 | `test_revoke_later_index_does_not_affect_earlier` | Revoke index 1 leaves index 0 unaffected |
 | `test_revoke_all_entries` | All entries can be revoked sequentially |
-| `test_double_revoke_panics` | Second revocation of the same index panics |
-| `test_revoke_out_of_range_panics` | Revoke on empty log panics |
-| `test_revoke_at_log_len_panics` | Revoke at index `log.len()` panics |
+| `test_double_revoke_panics` | Second revocation of same index panics with `"attestation already revoked at index"` |
+| `test_revoke_out_of_range_panics` | Revoke on empty log panics with `"attestation index out of range"` |
+| `test_revoke_at_log_len_panics` | Revoke at index `log.len()` panics (0-indexed boundary) |
 | `test_is_revoked_empty_log` | `is_attestation_revoked` returns `false` for any index on empty log |
 | `test_revoke_non_admin_panics` | Non-admin revoke is rejected |
 | `test_revoke_preserves_log_entry` | Append log contents unchanged after revocation |
