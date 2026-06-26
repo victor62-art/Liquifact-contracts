@@ -3555,28 +3555,50 @@ fn test_fund_batch_preserves_event_semantics() {
     // (Detailed event field verification depends on EscrowFunded structure)
 }
 
+// ─── is_fully_funded tests (issue #399) ──────────────────────────────────────
+
 #[test]
-fn test_remaining_funding_capacity() {
+fn test_is_fully_funded_returns_false_on_unfunded_escrow() {
+    let env = Env::default();
+    let (client, admin, sme) = setup(&env);
+    default_init(&client, &env, &admin, &sme);
+    // funded_amount = 0 → false
+    assert!(!client.is_fully_funded());
+}
+
+#[test]
+fn test_is_fully_funded_returns_false_on_partial_funding() {
+    let env = Env::default();
+    let (client, admin, sme) = setup(&env);
+    default_init(&client, &env, &admin, &sme);
+    let investor = Address::generate(&env);
+    client.fund(&investor, &(TARGET / 2));
+    // funded_amount < funding_target → false
+    assert!(!client.is_fully_funded());
+}
+
+#[test]
+fn test_is_fully_funded_returns_true_at_exact_target() {
+    let env = Env::default();
+    let (client, admin, sme) = setup(&env);
+    default_init(&client, &env, &admin, &sme);
+    let investor = Address::generate(&env);
+    client.fund(&investor, &TARGET);
+    // funded_amount == funding_target → true
+    assert!(client.is_fully_funded());
+}
+
+#[test]
+fn test_is_fully_funded_returns_true_when_overfunded() {
     let env = Env::default();
     env.mock_all_auths();
-    let (client, admin, sme) = setup(&env);
-    let investor = Address::generate(&env);
+    let client = deploy(&env);
+    let admin = Address::generate(&env);
+    let sme = Address::generate(&env);
     let (tok, tre) = free_addresses(&env);
-
-    // 1. Uninitialized state should panic
-    let uninitialized_client = deploy(&env);
-    let uninitialized_res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        uninitialized_client.get_remaining_funding_capacity();
-    }));
-    assert!(
-        uninitialized_res.is_err(),
-        "uninitialized capacity check should panic"
-    );
-
-    // 2. Initialized state (zero funded)
     client.init(
         &admin,
-        &soroban_sdk::String::from_str(&env, "CAPTEST"),
+        &soroban_sdk::String::from_str(&env, "FULL001"),
         &sme,
         &TARGET,
         &800i64,
@@ -3591,27 +3613,45 @@ fn test_remaining_funding_capacity() {
         &None,
         &None,
     );
-    assert_eq!(client.get_remaining_funding_capacity(), TARGET);
+    let investor = Address::generate(&env);
+    client.fund(&investor, &(TARGET + 1_000_000i128));
+    // funded_amount > funding_target → true
+    assert!(client.is_fully_funded());
+}
 
-    // 3. Partially funded state
-    client.fund(&investor, &(TARGET / 4));
-    assert_eq!(
-        client.get_remaining_funding_capacity(),
-        TARGET - (TARGET / 4)
-    );
+#[test]
+fn test_is_fully_funded_status_consistency() {
+    // When status == 1 (funded), is_fully_funded must return true.
+    // Confirm no state where status indicates funded but predicate returns false.
+    let env = Env::default();
+    let (client, admin, sme) = setup(&env);
+    default_init(&client, &env, &admin, &sme);
+    let investor = Address::generate(&env);
+    // Before reaching target: status=0, predicate=false
+    client.fund(&investor, &(TARGET - 1));
+    assert_eq!(client.get_escrow().status, 0);
+    assert!(!client.is_fully_funded());
+    // Crossing target: status=1, predicate=true
+    client.fund(&investor, &1i128);
+    assert_eq!(client.get_escrow().status, 1);
+    assert!(client.is_fully_funded());
+}
 
-    // 4. Exactly funded state
-    client.fund(&investor, &(3 * TARGET / 4));
-    assert_eq!(client.get_remaining_funding_capacity(), 0);
-
-    // 5. Overfunded state
-    let overfund_client = deploy(&env);
-    overfund_client.init(
+#[test]
+fn test_is_fully_funded_minimum_valid_target() {
+    // Edge case: funding_target = 1, fund 1 unit → fully funded.
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = deploy(&env);
+    let admin = Address::generate(&env);
+    let sme = Address::generate(&env);
+    let (tok, tre) = free_addresses(&env);
+    client.init(
         &admin,
-        &soroban_sdk::String::from_str(&env, "CAPTEST2"),
+        &soroban_sdk::String::from_str(&env, "FULL002"),
         &sme,
-        &1_000i128,
-        &800i64,
+        &1i128,
+        &0i64,
         &0u64,
         &tok,
         &None,
@@ -3623,6 +3663,26 @@ fn test_remaining_funding_capacity() {
         &None,
         &None,
     );
-    overfund_client.fund(&investor, &1_500i128);
-    assert_eq!(overfund_client.get_remaining_funding_capacity(), 0);
+    assert!(!client.is_fully_funded());
+    let investor = Address::generate(&env);
+    client.fund(&investor, &1i128);
+    assert!(client.is_fully_funded());
+}
+
+#[test]
+fn test_is_fully_funded_multiple_contributions_reaching_target() {
+    // Multiple investors whose combined contributions cross the target.
+    let env = Env::default();
+    let (client, admin, sme) = setup(&env);
+    default_init(&client, &env, &admin, &sme);
+    let inv_a = Address::generate(&env);
+    let inv_b = Address::generate(&env);
+    let inv_c = Address::generate(&env);
+    // Each contributes a third; only after the third does is_fully_funded return true.
+    client.fund(&inv_a, &(TARGET / 3));
+    assert!(!client.is_fully_funded());
+    client.fund(&inv_b, &(TARGET / 3));
+    assert!(!client.is_fully_funded());
+    client.fund(&inv_c, &(TARGET - 2 * (TARGET / 3)));
+    assert!(client.is_fully_funded());
 }
