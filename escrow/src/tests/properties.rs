@@ -143,6 +143,7 @@ struct FundingStep {
     lock_secs: u64,
 }
 
+// Property tests for funding accounting invariants (issue #325).
 proptest! {
     #[test]
     fn prop_funding_accounting_invariants_issue_325(
@@ -1175,6 +1176,8 @@ fn funded_and_settled_escrow<'a>(
     client
 }
 
+// Property: sum of all computed payouts never exceeds settle_pool.
+// Covers single investor, equal splits, and prime-denominator splits.
 proptest! {
     #[test]
     fn prop_payout_sum_le_settle_pool(

@@ -4,4 +4,4 @@
 #
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
-cc d1e1342096aefbfc646d6608de8d6da72d646e4394e53d67befd50f29896dfb6 # shrinks to investor_count = 2, seq_len = 4, funding_target = 72772, max_each = 1, caps_present = false, per_inv_cap = 1, uniq_cap = 1, investor_ixs = [0, 2], amounts = [1, 1], use_commitments = [false, true], lock_secs = [0, 0]
+cc d9f37677f8961185997b6736c813550946e57db06e8c76d5b520fafdec4793a2 # shrinks to investor_count = 2, seq_len = 2, funding_target = 50000, max_each = 1, caps_present = false, per_inv_cap = 1, uniq_cap = 1, investor_ixs = [2, 0], amounts = [1, 1], use_commitments = [false, true], lock_secs = [0, 0]

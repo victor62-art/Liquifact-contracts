@@ -3,7 +3,7 @@ use crate::{
     LiquifactEscrowClient,
 };
 use soroban_sdk::{
-    testutils::{Address as _, Events as _, Ledger},
+    testutils::{Address as _, Events, Ledger},
     Address, BytesN, Env, Error, InvokeError, Vec as SorobanVec,
 };
 
@@ -2711,11 +2711,16 @@ fn test_record_sme_collateral_commitment_semantics() {
     );
 }
 
-// `is_settleable` tests removed — method does not exist on LiquifactEscrowClient
+// ──────────────────────────────────────────────────────────────────────────────
+// `EscrowSettled` event — `settled_at_ledger_timestamp` field
+// ──────────────────────────────────────────────────────────────────────────────
 
-// ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ
-// `EscrowSettled` event ÔÇö `settled_at_ledger_timestamp` field
-// ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ
+/// Fund to exactly the target amount using a fresh investor.
+fn fund_to_target_stl(env: &Env, client: &super::LiquifactEscrowClient<'_>) -> Address {
+    let investor = Address::generate(env);
+    client.fund(&investor, &1000);
+    investor
+}
 
 #[test]
 fn test_settle_event_timestamp_matches_ledger_time() {
