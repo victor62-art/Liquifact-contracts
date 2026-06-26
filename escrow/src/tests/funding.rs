@@ -3383,7 +3383,7 @@ fn test_fund_batch_mid_batch_funded_transition() {
 }
 
 #[test]
-#[should_panic]
+#[should_panic(expected = "FundingBatchDuplicateInvestor")]
 fn test_fund_batch_duplicate_addresses() {
     let env = Env::default();
     env.mock_all_auths();
